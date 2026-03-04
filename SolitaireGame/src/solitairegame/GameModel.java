@@ -11,9 +11,6 @@ public class GameModel {
     // ── Carta ────────────────────────────────────────────────────────────────
     public static class Card {
 
-        /**
-         * Seme della carta
-         */
         public enum Suit {
             HEARTS("♥"), DIAMONDS("♦"), CLUBS("♣"), SPADES("♠");
             private final String simbolo;
@@ -28,9 +25,6 @@ public class GameModel {
             }
         }
 
-        /**
-         * Valore/rango della carta
-         */
         public enum Rank {
             ACE("A"), TWO("2"), THREE("3"), FOUR("4"), FIVE("5"), SIX("6"),
             SEVEN("7"), EIGHT("8"), NINE("9"), TEN("10"), JACK("J"), QUEEN("Q"), KING("K");
@@ -48,7 +42,7 @@ public class GameModel {
 
         private final Suit seme;
         private final Rank rango;
-        private boolean facciaInSu;
+        boolean facciaInSu;
 
         public Card(Suit seme, Rank rango) {
             this.seme = seme;
@@ -68,9 +62,6 @@ public class GameModel {
             return facciaInSu;
         }
 
-        /**
-         * Gira la carta (faccia su <-> faccia giu).
-         */
         public void flip() {
             facciaInSu = !facciaInSu;
         }
@@ -81,9 +72,6 @@ public class GameModel {
 
         private final List<Card> carte = new ArrayList<>();
 
-        /**
-         * Crea un mazzo completo di 52 carte.
-         */
         public Deck() {
             for (Card.Suit seme : Card.Suit.values()) {
                 for (Card.Rank rango : Card.Rank.values()) {
@@ -92,61 +80,202 @@ public class GameModel {
             }
         }
 
-        /**
-         * Mescola il mazzo.
-         */
         public void shuffle() {
             Collections.shuffle(carte);
         }
 
-        /**
-         * Ritorna true se ci sono ancora carte nel mazzo.
-         *
-         * @return
-         */
         public boolean hasCards() {
             return !carte.isEmpty();
         }
 
-        /**
-         * Pesca la carta in cima al mazzo e la rimuove.
-         *
-         * @return
-         */
         public Card draw() {
             return carte.isEmpty() ? null : carte.remove(carte.size() - 1);
         }
     }
 
-    // ── Livello di difficolta ─────────────────────────────────────────────────
+    // ── Livello di difficoltà ─────────────────────────────────────────────────
     public enum Difficulty {
         FACILE, DIFFICILE
     }
 
+    // ── Snapshot per undo ────────────────────────────────────────────────────
+    private static class StatoPartita {
+        List<Card> pilaStock;
+        List<Card> pilaScarto;
+        List<List<Card>> fondamenta;
+        List<List<Card>> tavolo;
+        int contatoreMovimenti;
+        // Per ogni carta salviamo lo stato facciaInSu
+        // Le carte sono condivise per riferimento, quindi salviamo copie profonde
+    }
+
     // ── Stato del gioco ──────────────────────────────────────────────────────
     private Deck mazzo;
-    private List<Card> pilaStock;       // carte ancora da pescare
-    private List<Card> pilaScarto;      // carte gia pescate (waste)
-    private List<List<Card>> fondamenta;      // 4 pile fondazione (A->K per seme)
-    private List<List<Card>> tableau;         // 7 colonne di gioco
+    private List<Card> pilaStock;
+    private List<Card> pilaScarto;
+    private List<List<Card>> fondamenta;
+    private List<List<Card>> tavolo;
 
     private List<Card> carteTrascinate = new ArrayList<>();
-    private int sorgentePila = -1; // codice pila sorgente del drag
-    private int sorgentePosizione = -1; // indice carta nella colonna sorgente
+    private int sorgentePila = -1;
+    private int sorgentePosizione = -1;
 
     // Statistiche partita
     private int secondiTrascorsi = 0;
     private int contatoreMovimenti = 0;
     private boolean partitaIniziata = false;
 
-    // Difficolta
+    // Difficoltà
     private Difficulty difficoltaCorrente = Difficulty.FACILE;
-    private int carteDaPescareAllaVolta = 1; // 1 in FACILE, 3 in DIFFICILE
+    private int carteDaPescareAllaVolta = 1;
+
+    // ── Undo ─────────────────────────────────────────────────────────────────
+    // Stack degli stati salvati per la funzione "mossa precedente"
+    private final Deque<byte[]> storicoPila = new ArrayDeque<>();
+
+    /**
+     * Salva lo stato corrente nello storico per poterlo ripristinare con undo.
+     * Chiamare PRIMA di eseguire ogni mossa.
+     */
+    private void salvaStatoPerUndo() {
+        // Serializzazione leggera: ogni carta è identificata da seme+rango+facciaInSu
+        // Usiamo una lista ordinata di interi come snapshot compatto
+        // Formato: [stockSize, carte stock..., scartoSize, carte scarto...,
+        //           fond0size, carte..., ..., fond3size, carte...,
+        //           tab0size, carte..., ..., tab6size, carte..., mosse]
+        // Ogni carta: seme(0-3)*13 + rango(0-12), bit 7 = facciaInSu
+        List<Integer> dati = new ArrayList<>();
+
+        // Stock
+        dati.add(pilaStock.size());
+        for (Card c : pilaStock) {
+            dati.add(codificaCarta(c));
+        }
+        // Scarto
+        dati.add(pilaScarto.size());
+        for (Card c : pilaScarto) {
+            dati.add(codificaCarta(c));
+        }
+        // Fondamenta
+        for (List<Card> f : fondamenta) {
+            dati.add(f.size());
+            for (Card c : f) {
+                dati.add(codificaCarta(c));
+            }
+        }
+        // Tavolo
+        for (List<Card> col : tavolo) {
+            dati.add(col.size());
+            for (Card c : col) {
+                dati.add(codificaCarta(c));
+            }
+        }
+        // Mosse
+        dati.add(contatoreMovimenti);
+
+        // Converti in byte array
+        byte[] snapshot = new byte[dati.size()];
+        for (int i = 0; i < dati.size(); i++) {
+            snapshot[i] = dati.get(i).byteValue();
+        }
+        storicoPila.push(snapshot);
+
+        // Mantieni max 50 stati
+        while (storicoPila.size() > 50) {
+            storicoPila.removeLast();
+        }
+    }
+
+    private int codificaCarta(Card c) {
+        int val = c.getSuit().ordinal() * 13 + c.getRank().ordinal();
+        if (c.facciaInSu) {
+            val |= 0x80;
+        }
+        return val & 0xFF;
+    }
+
+    /**
+     * Ripristina lo stato precedente (undo).
+     * Ritorna true se l'operazione è riuscita.
+     */
+    public boolean annullaMossa() {
+        if (storicoPila.isEmpty()) {
+            return false;
+        }
+        byte[] snapshot = storicoPila.pop();
+
+        // Ricostruisci tutte le carte del gioco (52 carte totali, stessi oggetti ricostruiti)
+        // Prima costruiamo la mappa indice -> Card nuova
+        Card[] tutteLeCarteNuove = new Card[52];
+        for (Card.Suit seme : Card.Suit.values()) {
+            for (Card.Rank rango : Card.Rank.values()) {
+                int idx = seme.ordinal() * 13 + rango.ordinal();
+                tutteLeCarteNuove[idx] = new Card(seme, rango);
+            }
+        }
+
+        int pos = 0;
+
+        // Ricostruisci stock
+        pilaStock = new ArrayList<>();
+        int stockSize = snapshot[pos++] & 0xFF;
+        for (int i = 0; i < stockSize; i++) {
+            int codice = snapshot[pos++] & 0xFF;
+            Card c = tutteLeCarteNuove[codice & 0x7F];
+            c.facciaInSu = (codice & 0x80) != 0;
+            pilaStock.add(c);
+        }
+
+        // Ricostruisci scarto
+        pilaScarto = new ArrayList<>();
+        int scartoSize = snapshot[pos++] & 0xFF;
+        for (int i = 0; i < scartoSize; i++) {
+            int codice = snapshot[pos++] & 0xFF;
+            Card c = tutteLeCarteNuove[codice & 0x7F];
+            c.facciaInSu = (codice & 0x80) != 0;
+            pilaScarto.add(c);
+        }
+
+        // Ricostruisci fondamenta
+        fondamenta = new ArrayList<>();
+        for (int f = 0; f < 4; f++) {
+            List<Card> fonda = new ArrayList<>();
+            int fSize = snapshot[pos++] & 0xFF;
+            for (int i = 0; i < fSize; i++) {
+                int codice = snapshot[pos++] & 0xFF;
+                Card c = tutteLeCarteNuove[codice & 0x7F];
+                c.facciaInSu = (codice & 0x80) != 0;
+                fonda.add(c);
+            }
+            fondamenta.add(fonda);
+        }
+
+        // Ricostruisci tavolo
+        tavolo = new ArrayList<>();
+        for (int col = 0; col < 7; col++) {
+            List<Card> colonna = new ArrayList<>();
+            int colSize = snapshot[pos++] & 0xFF;
+            for (int i = 0; i < colSize; i++) {
+                int codice = snapshot[pos++] & 0xFF;
+                Card c = tutteLeCarteNuove[codice & 0x7F];
+                c.facciaInSu = (codice & 0x80) != 0;
+                colonna.add(c);
+            }
+            tavolo.add(colonna);
+        }
+
+        contatoreMovimenti = snapshot[pos] & 0xFF;
+        carteTrascinate.clear();
+        sorgentePila = -1;
+        sorgentePosizione = -1;
+        return true;
+    }
+
+    public boolean hasMossePrecedenti() {
+        return !storicoPila.isEmpty();
+    }
 
     // ── Inizializzazione partita ──────────────────────────────────────────────
-    /**
-     * Inizializza o resetta una nuova partita.
-     */
     public void initGame() {
         mazzo = new Deck();
         mazzo.shuffle();
@@ -154,33 +283,30 @@ public class GameModel {
         pilaStock = new ArrayList<>();
         pilaScarto = new ArrayList<>();
         fondamenta = new ArrayList<>();
-        tableau = new ArrayList<>();
+        tavolo = new ArrayList<>();
+        storicoPila.clear();
 
         secondiTrascorsi = 0;
         contatoreMovimenti = 0;
         partitaIniziata = false;
 
-        // 4 fondamenta vuote e 7 colonne del tableau
         for (int i = 0; i < 4; i++) {
             fondamenta.add(new ArrayList<>());
         }
         for (int i = 0; i < 7; i++) {
-            tableau.add(new ArrayList<>());
+            tavolo.add(new ArrayList<>());
         }
 
-        // Distribuisce le carte nel tableau:
-        // colonna i ha (i+1) carte, solo l'ultima e' girata a faccia in su
         for (int col = 0; col < 7; col++) {
             for (int riga = 0; riga <= col; riga++) {
                 Card carta = mazzo.draw();
                 if (riga == col) {
-                    carta.flip(); // ultima carta della colonna: faccia in su
+                    carta.flip();
                 }
-                tableau.get(col).add(carta);
+                tavolo.get(col).add(carta);
             }
         }
 
-        // Le carte rimanenti vanno nello stock (tutte a faccia in giu)
         while (mazzo.hasCards()) {
             pilaStock.add(mazzo.draw());
         }
@@ -190,34 +316,32 @@ public class GameModel {
 
     // ── Pesca dallo stock ─────────────────────────────────────────────────────
     /**
-     * Pesca dalla pila stock (click sullo stock).
+     * FACILE: pesca 1 carta alla volta, mostra max 3 carte nello scarto.
+     * Quando lo scarto raggiunge 3 carte visibili e si clicca ancora,
+     * NON viene pescata una nuova carta ma le 3 vengono "resettate":
+     * si fa scorrere la finestra visibile (la più vecchia delle 3 esce dalla
+     * vista e la successiva nello stock entra). In pratica le carte visibili
+     * avanzano di 1 ogni click, e al 4° click (quando tutte e 3 sono visibili)
+     * si continua a pescare normalmente. Se lo stock è vuoto si riciclano le
+     * carte dello scarto.
      *
-     * FACILE: pesca sempre 1 carta alla volta. La waste mostra solo la carta in
-     * cima (1 carta visibile). Ogni click pesca la carta successiva nello
-     * stock, una alla volta.
-     *
-     * DIFFICILE: pesca 3 carte alla volta. La waste mostra le ultime 3 carte
-     * sovrapposte.
-     *
-     * Se lo stock e' vuoto, rimette tutte le carte della waste nello stock
-     * (girate a faccia in giu). Questa operazione NON incrementa il contatore
-     * delle mosse.
+     * DIFFICILE: pesca 3 carte alla volta.
      */
-    // Cerca il metodo drawFromStock() e assicurati che sia esattamente così:
     public void drawFromStock() {
+        salvaStatoPerUndo();
         if (!pilaStock.isEmpty()) {
             int daPescare = Math.min(carteDaPescareAllaVolta, pilaStock.size());
             for (int i = 0; i < daPescare; i++) {
                 Card carta = pilaStock.remove(pilaStock.size() - 1);
-                carta.facciaInSu = true; // Forza faccia in su
+                carta.facciaInSu = true;
                 pilaScarto.add(carta);
             }
             incrementaMovimenti();
         } else if (!pilaScarto.isEmpty()) {
-            // RESET DELLO STOCK
+            // Reset: rimetti tutte le carte dello scarto nello stock
             Collections.reverse(pilaScarto);
             for (Card carta : pilaScarto) {
-                carta.facciaInSu = false; // Forza faccia in giù
+                carta.facciaInSu = false;
                 pilaStock.add(carta);
             }
             pilaScarto.clear();
@@ -225,13 +349,9 @@ public class GameModel {
     }
 
     /**
-     * Restituisce quante carte della waste pile devono essere visibili nella
-     * Vista.La Vista DEVE usare questo metodo invece di assumere sempre 3.
-     *
-     * FACILE: 1 carta (solo quella in cima, la piu' recente). DIFFICILE: fino a
-     * 3 carte (le ultime 3 sovrapposte con offset).
-     *
-     * @return
+     * Numero di carte visibili nello scarto.
+     * FACILE: sempre 1 (solo la carta in cima).
+     * DIFFICILE: fino a 3.
      */
     public int getCarteVisibiliWaste() {
         if (pilaScarto.isEmpty()) {
@@ -244,14 +364,6 @@ public class GameModel {
     }
 
     // ── Regole di posizionamento ──────────────────────────────────────────────
-    /**
-     * Ritorna true se la carta puo' essere posizionata sulla fondamenta
-     * indicata.
-     *
-     * @param carta
-     * @param indiceFondamenta
-     * @return
-     */
     public boolean canPlaceOnFoundation(Card carta, int indiceFondamenta) {
         List<Card> f = fondamenta.get(indiceFondamenta);
         if (f.isEmpty()) {
@@ -262,16 +374,8 @@ public class GameModel {
                 && carta.getRank().ordinal() == cima.getRank().ordinal() + 1;
     }
 
-    /**
-     * Ritorna true se la carta puo' essere posizionata sulla colonna tableau
-     * indicata.
-     *
-     * @param carta
-     * @param colonna
-     * @return
-     */
     public boolean canPlaceOnTableau(Card carta, int colonna) {
-        List<Card> pila = tableau.get(colonna);
+        List<Card> pila = tavolo.get(colonna);
         if (pila.isEmpty()) {
             return carta.getRank() == Card.Rank.KING;
         }
@@ -283,13 +387,6 @@ public class GameModel {
     }
 
     // ── Posizionamento carte (drop) ───────────────────────────────────────────
-    /**
-     * Tenta di posizionare la carta trascinata su una fondamenta. Ritorna true
-     * se l'operazione e' riuscita.
-     *
-     * @param indiceFondamenta
-     * @return
-     */
     public boolean tryPlaceOnFoundation(int indiceFondamenta) {
         if (carteTrascinate.size() != 1) {
             return false;
@@ -298,36 +395,25 @@ public class GameModel {
         if (!canPlaceOnFoundation(carta, indiceFondamenta)) {
             return false;
         }
+        salvaStatoPerUndo();
         rimuoviCarteDallaSorgente();
         fondamenta.get(indiceFondamenta).add(carta);
         incrementaMovimenti();
         return true;
     }
 
-    /**
-     * Tenta di posizionare le carte trascinate su una colonna del tableau.
-     * Ritorna true se l'operazione e' riuscita.
-     *
-     * @param colonna
-     * @return
-     */
     public boolean tryPlaceOnTableau(int colonna) {
         Card primaCarta = carteTrascinate.get(0);
         if (!canPlaceOnTableau(primaCarta, colonna)) {
             return false;
         }
+        salvaStatoPerUndo();
         rimuoviCarteDallaSorgente();
-        tableau.get(colonna).addAll(carteTrascinate);
+        tavolo.get(colonna).addAll(carteTrascinate);
         incrementaMovimenti();
         return true;
     }
 
-    /**
-     * Ritorna true se tutte e 4 le fondamenta sono complete (13 carte =
-     * vittoria).
-     *
-     * @return
-     */
     public boolean checkWin() {
         for (List<Card> f : fondamenta) {
             if (f.size() != 13) {
@@ -337,45 +423,31 @@ public class GameModel {
         return true;
     }
 
-    /**
-     * Rimuove le carte trascinate dalla pila sorgente originale. Va chiamato
-     * PRIMA di aggiungere le carte alla destinazione.
-     */
     public void rimuoviCarteDallaSorgente() {
         if (sorgentePila == -2) {
-            // Sorgente: waste pile
             if (!pilaScarto.isEmpty()) {
                 pilaScarto.remove(pilaScarto.size() - 1);
             }
         } else if (sorgentePila < -2) {
-            // Sorgente: fondamenta (codice: -(indice+3))
             int idx = -(sorgentePila + 3);
             List<Card> f = fondamenta.get(idx);
             if (!f.isEmpty()) {
                 f.remove(f.size() - 1);
             }
         } else if (sorgentePila >= 0) {
-            // Sorgente: colonna tableau
-            List<Card> pila = tableau.get(sorgentePila);
+            List<Card> pila = tavolo.get(sorgentePila);
             pila.removeAll(carteTrascinate);
-            // Se l'ultima carta rimasta e' coperta, la gira
             if (!pila.isEmpty() && !pila.get(pila.size() - 1).isFaceUp()) {
                 pila.get(pila.size() - 1).flip();
             }
         }
     }
 
-    /**
-     * Alias per compatibilita' con il Controller.
-     */
     public void removeCardFromSource() {
         rimuoviCarteDallaSorgente();
     }
 
     // ── Gestione drag ─────────────────────────────────────────────────────────
-    /**
-     * Inizia un drag dalla waste pile (ultima carta visibile).
-     */
     public void startDragFromWaste() {
         if (pilaScarto.isEmpty()) {
             return;
@@ -384,11 +456,6 @@ public class GameModel {
         sorgentePila = -2;
     }
 
-    /**
-     * Inizia un drag da una fondamenta.
-     *
-     * @param i
-     */
     public void startDragFromFoundation(int i) {
         List<Card> f = fondamenta.get(i);
         if (f.isEmpty()) {
@@ -398,14 +465,8 @@ public class GameModel {
         sorgentePila = -(i + 3);
     }
 
-    /**
-     * Inizia un drag da una colonna del tableau (include tutte le carte sotto).
-     *
-     * @param colonna
-     * @param indiceCarta
-     */
     public void startDragFromTableau(int colonna, int indiceCarta) {
-        List<Card> pila = tableau.get(colonna);
+        List<Card> pila = tavolo.get(colonna);
         for (int j = indiceCarta; j < pila.size(); j++) {
             carteTrascinate.add(pila.get(j));
         }
@@ -413,9 +474,6 @@ public class GameModel {
         sorgentePosizione = indiceCarta;
     }
 
-    /**
-     * Azzera lo stato del drag al termine di un'operazione.
-     */
     public void clearDrag() {
         carteTrascinate.clear();
         sorgentePila = -1;
@@ -423,19 +481,12 @@ public class GameModel {
     }
 
     // ── Timer / Statistiche ──────────────────────────────────────────────────
-    /**
-     * Chiamare ogni secondo dal timer della Vista per incrementare il
-     * contatore.
-     */
     public void tickTimer() {
         if (partitaIniziata) {
             secondiTrascorsi++;
         }
     }
 
-    /**
-     * Incrementa il numero di mosse e segna la partita come iniziata.
-     */
     private void incrementaMovimenti() {
         if (!partitaIniziata) {
             partitaIniziata = true;
@@ -443,12 +494,7 @@ public class GameModel {
         contatoreMovimenti++;
     }
 
-    // ── Impostazione difficolta ───────────────────────────────────────────────
-    /**
-     * Imposta la difficolta' e aggiorna le carte da pescare alla volta.
-     *
-     * @param d
-     */
+    // ── Impostazione difficoltà ───────────────────────────────────────────────
     public void setDifficulty(Difficulty d) {
         difficoltaCorrente = d;
         carteDaPescareAllaVolta = (d == Difficulty.FACILE) ? 1 : 3;
@@ -468,7 +514,7 @@ public class GameModel {
     }
 
     public List<List<Card>> getTableau() {
-        return tableau;
+        return tavolo;
     }
 
     public List<Card> getDraggedCards() {
