@@ -6,24 +6,23 @@ import java.awt.event.*;
 import java.util.List;
 
 /**
- * CONTROLLER - Collega Model e View.
- * Gestisce gli eventi utente, aggiorna il Model e ordina alla View di ridisegnarsi.
+ * CONTROLLER - Collega Model e View. Gestisce gli eventi utente, aggiorna il
+ * Model e ordina alla View di ridisegnarsi.
  */
 public class GameController {
 
     private final GameModel model;
-    private final GameView  view;
+    private final GameView view;
 
     // Stato drag (coordinate) — i dati delle carte stanno nel model
-    private Point dragStart      = null;
+    private Point dragStart = null;
     private Point currentMousePos = null;
-    private Point dragOffset     = new Point(0, 0);
+    private Point dragOffset = new Point(0, 0);
 
     // ── Costruttore ──────────────────────────────────────────────────────────
-
     public GameController(GameModel model, GameView view) {
         this.model = model;
-        this.view  = view;
+        this.view = view;
 
         // Collega il pannello al model per il rendering
         view.gamePanel.setModel(model);
@@ -39,7 +38,6 @@ public class GameController {
     }
 
     // ── Timer ────────────────────────────────────────────────────────────────
-
     private void startTimer() {
         javax.swing.Timer timer = new javax.swing.Timer(1000, e -> {
             model.tickTimer();
@@ -49,12 +47,11 @@ public class GameController {
     }
 
     // ── Listener pulsanti bottom panel ───────────────────────────────────────
-
     private void registerButtonListeners() {
         // Cerca componenti per nome nel bottom panel
         // (il bottom panel è il component SOUTH)
         JPanel bottom = (JPanel) ((BorderLayout) view.getContentPane().getLayout())
-            .getLayoutComponent(BorderLayout.SOUTH);
+                .getLayoutComponent(BorderLayout.SOUTH);
 
         for (Component c : bottom.getComponents()) {
             if (c instanceof JComboBox) {
@@ -63,14 +60,13 @@ public class GameController {
                 box.addActionListener(e -> {
                     int sel = box.getSelectedIndex();
                     model.setDifficulty(sel == 0
-                        ? GameModel.Difficulty.FACILE
-                        : GameModel.Difficulty.DIFFICILE);
+                            ? GameModel.Difficulty.FACILE
+                            : GameModel.Difficulty.DIFFICILE);
                     view.updateDifficultyLabel(sel == 0 ? "Facile" : "Difficile");
                     model.initGame();
                     refreshView();
                 });
-            } else if (c instanceof JButton) {
-                JButton btn = (JButton) c;
+            } else if (c instanceof JButton btn) {
                 if ("newGameButton".equals(btn.getName())) {
                     btn.addActionListener(e -> {
                         model.initGame();
@@ -84,46 +80,59 @@ public class GameController {
     }
 
     // ── Listener mouse del GamePanel ─────────────────────────────────────────
-
     private void registerMouseListeners() {
         MouseAdapter ma = new MouseAdapter() {
-            @Override public void mousePressed (MouseEvent e) { handleMousePress(e);   }
-            @Override public void mouseDragged (MouseEvent e) { handleMouseDrag(e);    }
-            @Override public void mouseReleased(MouseEvent e) { handleMouseRelease(e); }
-            @Override public void mouseClicked (MouseEvent e) { handleMouseClick(e);   }
+            @Override
+            public void mousePressed(MouseEvent e) {
+                handleMousePress(e);
+            }
+
+            @Override
+            public void mouseDragged(MouseEvent e) {
+                handleMouseDrag(e);
+            }
+
+            @Override
+            public void mouseReleased(MouseEvent e) {
+                handleMouseRelease(e);
+            }
+
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                handleMouseClick(e);
+            }
         };
         view.gamePanel.addMouseListener(ma);
         view.gamePanel.addMouseMotionListener(ma);
     }
 
     // ── Click (stock) ─────────────────────────────────────────────────────────
-
     private void handleMouseClick(MouseEvent e) {
         int x = e.getX(), y = e.getY();
         int stockX = GameView.CARD_SPACING;
         int stockY = GameView.CARD_SPACING;
-        if (x >= stockX && x <= stockX + GameView.CARD_WIDTH &&
-            y >= stockY && y <= stockY + GameView.CARD_HEIGHT) {
+        if (x >= stockX && x <= stockX + GameView.CARD_WIDTH
+                && y >= stockY && y <= stockY + GameView.CARD_HEIGHT) {
             model.drawFromStock();
             refreshView();
         }
     }
 
     // ── Press (inizio drag) ───────────────────────────────────────────────────
-
     private void handleMousePress(MouseEvent e) {
         int mx = e.getX(), my = e.getY();
         model.clearDrag();
         dragStart = null;
 
         int wasteX = GameView.CARD_SPACING + GameView.CARD_WIDTH + GameView.CARD_SPACING;
-
         // Waste
+        // --- SEZIONE WASTE CORRETTA ---
         if (!model.getWastePile().isEmpty()) {
-            int show   = Math.min(3, model.getWastePile().size());
-            int topOff = (show - 1) * 20;
-            if (mx >= wasteX + topOff && mx <= wasteX + topOff + GameView.CARD_WIDTH &&
-                my >= GameView.CARD_SPACING && my <= GameView.CARD_SPACING + GameView.CARD_HEIGHT) {
+            int visibili = model.getCarteVisibiliWaste();
+            int topOff = (visibili - 1) * 20; // Sarà 0 in modalità facile
+
+            if (mx >= wasteX + topOff && mx <= wasteX + topOff + GameView.CARD_WIDTH
+                    && my >= GameView.CARD_SPACING && my <= GameView.CARD_SPACING + GameView.CARD_HEIGHT) {
                 model.startDragFromWaste();
                 dragStart = e.getPoint();
                 dragOffset.setLocation(mx - (wasteX + topOff), my - GameView.CARD_SPACING);
@@ -135,9 +144,9 @@ public class GameController {
         // Foundations
         for (int i = 0; i < 4; i++) {
             int fx = GameView.CARD_SPACING + (3 + i) * (GameView.CARD_WIDTH + GameView.CARD_SPACING);
-            if (!model.getFoundations().get(i).isEmpty() &&
-                mx >= fx && mx <= fx + GameView.CARD_WIDTH &&
-                my >= GameView.CARD_SPACING && my <= GameView.CARD_SPACING + GameView.CARD_HEIGHT) {
+            if (!model.getFoundations().get(i).isEmpty()
+                    && mx >= fx && mx <= fx + GameView.CARD_WIDTH
+                    && my >= GameView.CARD_SPACING && my <= GameView.CARD_SPACING + GameView.CARD_HEIGHT) {
                 model.startDragFromFoundation(i);
                 dragStart = e.getPoint();
                 dragOffset.setLocation(mx - fx, my - GameView.CARD_SPACING);
@@ -149,18 +158,20 @@ public class GameController {
         // Tableau
         for (int col = 0; col < 7; col++) {
             List<GameModel.Card> pile = model.getTableau().get(col);
-            if (pile.isEmpty()) continue;
+            if (pile.isEmpty()) {
+                continue;
+            }
             int tx = GameView.CARD_SPACING + col * (GameView.CARD_WIDTH + GameView.CARD_SPACING);
             int ty = GameView.TABLEAU_Y;
 
             for (int i = pile.size() - 1; i >= 0; i--) {
                 GameModel.Card card = pile.get(i);
-                int cardY   = ty + i * GameView.PILE_OFFSET;
+                int cardY = ty + i * GameView.PILE_OFFSET;
                 boolean last = (i == pile.size() - 1);
-                int cardH   = last ? GameView.CARD_HEIGHT : GameView.PILE_OFFSET;
+                int cardH = last ? GameView.CARD_HEIGHT : GameView.PILE_OFFSET;
 
-                if (mx >= tx && mx <= tx + GameView.CARD_WIDTH &&
-                    my >= cardY && my <= cardY + cardH) {
+                if (mx >= tx && mx <= tx + GameView.CARD_WIDTH
+                        && my >= cardY && my <= cardY + cardH) {
                     if (card.isFaceUp()) {
                         model.startDragFromTableau(col, i);
                         dragStart = e.getPoint();
@@ -174,7 +185,6 @@ public class GameController {
     }
 
     // ── Drag ─────────────────────────────────────────────────────────────────
-
     private void handleMouseDrag(MouseEvent e) {
         if (!model.getDraggedCards().isEmpty() && dragStart != null) {
             currentMousePos = e.getPoint();
@@ -183,9 +193,10 @@ public class GameController {
     }
 
     // ── Release (drop) ────────────────────────────────────────────────────────
-
     private void handleMouseRelease(MouseEvent e) {
-        if (model.getDraggedCards().isEmpty()) return;
+        if (model.getDraggedCards().isEmpty()) {
+            return;
+        }
 
         int mx = e.getX(), my = e.getY();
         boolean placed = false;
@@ -194,12 +205,13 @@ public class GameController {
         if (model.getDraggedCards().size() == 1) {
             for (int i = 0; i < 4; i++) {
                 int fx = GameView.CARD_SPACING + (3 + i) * (GameView.CARD_WIDTH + GameView.CARD_SPACING);
-                if (mx >= fx && mx <= fx + GameView.CARD_WIDTH &&
-                    my >= GameView.CARD_SPACING && my <= GameView.CARD_SPACING + GameView.CARD_HEIGHT) {
+                if (mx >= fx && mx <= fx + GameView.CARD_WIDTH
+                        && my >= GameView.CARD_SPACING && my <= GameView.CARD_SPACING + GameView.CARD_HEIGHT) {
                     if (model.tryPlaceOnFoundation(i)) {
                         placed = true;
-                        if (model.checkWin())
+                        if (model.checkWin()) {
                             SwingUtilities.invokeLater(this::showVictory);
+                        }
                         break;
                     }
                 }
@@ -209,13 +221,13 @@ public class GameController {
         // Prova tableau
         if (!placed) {
             for (int col = 0; col < 7; col++) {
-                int tx  = GameView.CARD_SPACING + col * (GameView.CARD_WIDTH + GameView.CARD_SPACING);
-                int ty  = GameView.TABLEAU_Y;
+                int tx = GameView.CARD_SPACING + col * (GameView.CARD_WIDTH + GameView.CARD_SPACING);
+                int ty = GameView.TABLEAU_Y;
                 List<GameModel.Card> pile = model.getTableau().get(col);
                 int targetY = pile.isEmpty() ? ty : ty + pile.size() * GameView.PILE_OFFSET;
 
-                if (mx >= tx && mx <= tx + GameView.CARD_WIDTH &&
-                    my >= ty && my <= targetY + GameView.CARD_HEIGHT) {
+                if (mx >= tx && mx <= tx + GameView.CARD_WIDTH
+                        && my >= ty && my <= targetY + GameView.CARD_HEIGHT) {
                     if (model.tryPlaceOnTableau(col)) {
                         placed = true;
                         break;
@@ -225,27 +237,25 @@ public class GameController {
         }
 
         model.clearDrag();
-        dragStart       = null;
+        dragStart = null;
         currentMousePos = null;
         syncDragToView(null);
         refreshView();
     }
 
     // ── Sincronizza stato drag con la View ───────────────────────────────────
-
     private void syncDragToView(Point mousePos) {
         view.gamePanel.setDragState(
-            model.getDraggedCards(),
-            dragStart,
-            mousePos,
-            model.getSourceTableau(),
-            model.getSourceIndex()
+                model.getDraggedCards(),
+                dragStart,
+                mousePos,
+                model.getSourceTableau(),
+                model.getSourceIndex()
         );
         view.gamePanel.repaint();
     }
 
     // ── Aggiorna etichette e ridisegna ───────────────────────────────────────
-
     private void refreshView() {
         view.updateTimerLabel(model.getElapsedSeconds());
         view.updateMovesLabel(model.getMoveCount());
@@ -254,22 +264,23 @@ public class GameController {
 
     private void showVictory() {
         view.showVictoryDialog(
-            model.getElapsedSeconds(),
-            model.getMoveCount(),
-            model.getDifficulty()
+                model.getElapsedSeconds(),
+                model.getMoveCount(),
+                model.getDifficulty()
         );
     }
 
     // ── Entry point ──────────────────────────────────────────────────────────
-
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> {
             try {
                 UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
-            } catch (Exception ex) { ex.printStackTrace(); }
+            } catch (ClassNotFoundException | IllegalAccessException | InstantiationException | UnsupportedLookAndFeelException ex) {
+                System.out.println(ex);
+            }
 
             GameModel model = new GameModel();
-            GameView  view  = new GameView();
+            GameView view = new GameView();
 
             new GameController(model, view);
 
